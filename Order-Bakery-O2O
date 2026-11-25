@@ -1,0 +1,1011 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Demo: ระบบแจ้งเตือน & วางแผนออเดอร์เบเกอรี (Supabase + Export)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    @keyframes popIn {
+      0% { transform: translateY(-16px) scale(0.96); opacity: 0; }
+      100% { transform: translateY(0) scale(1); opacity: 1; }
+    }
+    .animate-pop { animation: popIn 0.25s ease-out forwards; }
+
+    /* Print / Document Export Styling */
+    #print-document { display: none; }
+    @media print {
+      body * { visibility: hidden; }
+      #print-document, #print-document * { visibility: visible; }
+      #print-document {
+        display: block !important;
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        padding: 16px;
+        background: #ffffff;
+        color: #0f172a;
+      }
+      .no-print { display: none !important; }
+    }
+  </style>
+</head>
+<body class="bg-amber-50/60 text-slate-800 min-h-screen pb-12">
+
+  <!-- Top Bar -->
+  <header class="no-print sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-amber-200 shadow-sm">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-2.5">
+        <div class="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center text-xl font-bold shadow">
+          🥐
+        </div>
+        <div>
+          <h1 class="font-bold text-base sm:text-lg text-slate-900 leading-tight">
+            Bakery O2O Order & Prep Demo
+          </h1>
+          <p class="text-xs text-slate-500">
+            Makro Pro → O2O → แจ้งเตือนเบเกอรี • Supabase Sync & Export
+          </p>
+        </div>
+      </div>
+
+      <!-- Role Switcher -->
+      <div class="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200">
+        <button onclick="setRole('staff')" id="role-staff"
+          class="role-btn px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition bg-amber-500 text-white shadow-sm">
+          👨‍🍳 พนักงานเบเกอรี
+        </button>
+        <button onclick="setRole('supervisor')" id="role-supervisor"
+          class="role-btn px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition text-slate-600 hover:bg-white">
+          📋 หัวหน้างาน
+        </button>
+        <button onclick="setRole('o2o_sim')" id="role-o2o_sim"
+          class="role-btn px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition text-slate-600 hover:bg-white">
+          📲 จำลอง O2O เข้า
+        </button>
+      </div>
+    </div>
+
+    <!-- Connection & Export Bar -->
+    <div class="bg-amber-100/75 border-t border-amber-200/80 px-4 py-2">
+      <div class="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-2 text-xs">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span id="mode-badge" class="px-2.5 py-0.5 rounded-full font-semibold bg-emerald-600 text-white">
+            โหมดเดโมในเครื่อง (พร้อมเล่นทันที)
+          </span>
+          <button onclick="openSupabaseModal()" class="underline text-amber-950 font-semibold hover:text-amber-700">
+            ตั้งค่าเชื่อมต่อ Supabase จริง
+          </button>
+          <button onclick="syncFromSupabase(true)" id="btn-refresh-sb"
+            class="hidden px-2.5 py-0.5 rounded-lg bg-white border border-amber-300 text-slate-700 font-semibold hover:bg-amber-50">
+            ↻ ซิงก์ข้อมูลล่าสุด
+          </button>
+        </div>
+
+        <div class="flex items-center gap-2 flex-wrap">
+          <label class="inline-flex items-center gap-1 cursor-pointer font-medium text-slate-700 mr-1">
+            <input type="checkbox" id="sound-toggle" checked class="rounded text-amber-600" />
+            <span>เสียงเตือน</span>
+          </label>
+          <button onclick="exportToExcel()"
+            class="bg-emerald-700 hover:bg-emerald-800 text-white font-semibold px-3 py-1 rounded-lg shadow-sm transition">
+            📊 Export Excel
+          </button>
+          <button onclick="exportOrderDocument()"
+            class="bg-slate-800 hover:bg-slate-900 text-white font-semibold px-3 py-1 rounded-lg shadow-sm transition">
+            📄 Export เอกสารใบสั่ง
+          </button>
+          <button onclick="triggerDemoOrder(true)"
+            class="bg-orange-600 hover:bg-orange-700 text-white font-semibold px-3 py-1 rounded-lg shadow-sm transition">
+            + ออเดอร์ถาดด่วน
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Real-time Toast Alert Banner -->
+  <div id="live-toast" class="no-print hidden fixed top-24 right-4 left-4 sm:left-auto sm:w-96 z-40 animate-pop">
+    <div class="bg-slate-900 text-white rounded-2xl shadow-2xl border-2 border-amber-400 p-4">
+      <div class="flex items-start justify-between gap-2">
+        <div class="flex items-center gap-2">
+          <span class="px-2 py-0.5 rounded-md bg-amber-400 text-slate-950 text-xs font-extrabold uppercase">
+            New O2O Order
+          </span>
+          <span id="toast-tray-tag" class="hidden px-2 py-0.5 rounded-md bg-rose-500 text-white text-xs font-bold">
+            ถาด! วางแผนด่วน
+          </span>
+        </div>
+        <button onclick="hideToast()" class="text-slate-400 hover:text-white text-sm font-bold">✕</button>
+      </div>
+      <p id="toast-title" class="font-bold text-base mt-2 text-amber-200"></p>
+      <p id="toast-desc" class="text-xs text-slate-300 mt-1"></p>
+      <div class="mt-3 flex justify-end gap-2">
+        <button onclick="hideToast()" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium">
+          ปิด
+        </button>
+        <button onclick="acceptLatestToastOrder()" class="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold">
+          รับออเดอร์ทันที
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Content -->
+  <main class="no-print max-w-6xl mx-auto px-4 pt-5 space-y-6">
+
+    <!-- KPI Summary Cards -->
+    <section class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div class="bg-white rounded-2xl p-4 border border-amber-200/70 shadow-sm">
+        <p class="text-xs text-slate-500">ออเดอร์รอรับ / ใหม่</p>
+        <p id="kpi-new" class="text-2xl font-extrabold text-orange-600 mt-1">0</p>
+      </div>
+      <div class="bg-white rounded-2xl p-4 border border-amber-200/70 shadow-sm">
+        <p class="text-xs text-slate-500">รายการแบบ "ถาด" ต้องเตรียม</p>
+        <p id="kpi-tray" class="text-2xl font-extrabold text-rose-600 mt-1">0</p>
+      </div>
+      <div class="bg-white rounded-2xl p-4 border border-amber-200/70 shadow-sm">
+        <p class="text-xs text-slate-500">กำลังผลิต / เตรียมของ</p>
+        <p id="kpi-prep" class="text-2xl font-extrabold text-amber-600 mt-1">0</p>
+      </div>
+      <div class="bg-white rounded-2xl p-4 border border-amber-200/70 shadow-sm">
+        <p class="text-xs text-slate-500">แจ้งของไม่พอ / เสี่ยง CN</p>
+        <p id="kpi-cn" class="text-2xl font-extrabold text-slate-700 mt-1">0</p>
+      </div>
+    </section>
+
+    <!-- O2O Simulator -->
+    <section id="panel-o2o" class="bg-white rounded-2xl border-2 border-sky-200 p-5 shadow-sm">
+      <div class="flex items-center justify-between flex-wrap gap-2 mb-4">
+        <div>
+          <span class="text-xs font-bold uppercase tracking-wider text-sky-600">Makro Pro → O2O Simulator</span>
+          <h2 class="text-lg font-bold text-slate-900">จำลองส่งออเดอร์เบเกอรีเข้าระบบ</h2>
+        </div>
+        <button onclick="triggerDemoOrder(false)"
+          class="px-3.5 py-2 rounded-xl bg-sky-100 hover:bg-sky-200 text-sky-900 text-xs font-bold transition">
+          🎲 สุ่มออเดอร์ตัวอย่าง
+        </button>
+      </div>
+
+      <form onsubmit="handleCreateOrder(event)" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+        <div class="lg:col-span-2">
+          <label class="block text-xs font-semibold text-slate-600 mb-1">เลือกสินค้าเบเกอรี</label>
+          <select id="sim-product" class="w-full rounded-xl border-slate-300 border px-3 py-2.5 text-sm bg-slate-50">
+            <option value="BK-001">แซนด์วิชแฮมชีส (12 ชิ้น/ถาด | รอบเช้า)</option>
+            <option value="BK-002">ขนมปังกะโหลก (6 แถว/ถาด | ทั้งวัน)</option>
+            <option value="BK-003" selected>ครัวซองต์เนยสด (15 ชิ้น/ถาด | รอบเช้า)</option>
+            <option value="BK-004">เดนิชลูกเกด (12 ชิ้น/ถาด | รอบบ่าย)</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">รูปแบบการสั่ง</label>
+          <select id="sim-unit" class="w-full rounded-xl border-slate-300 border px-3 py-2.5 text-sm bg-slate-50">
+            <option value="tray" selected>ถาด (Tray)</option>
+            <option value="piece">ชิ้น (Piece)</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">จำนวน</label>
+          <input id="sim-qty" type="number" min="1" max="50" value="3"
+            class="w-full rounded-xl border-slate-300 border px-3 py-2.5 text-sm bg-slate-50" />
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">หมายเหตุลูกค้า/รอบรับ</label>
+          <input id="sim-note" type="text" placeholder="เช่น จัดเบรกเช้า / รับหน้าร้าน"
+            class="w-full rounded-xl border-slate-300 border px-3 py-2.5 text-sm bg-slate-50" />
+        </div>
+
+        <div class="flex items-end">
+          <button type="submit"
+            class="w-full py-2.5 px-4 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-sm shadow transition">
+            ส่งออเดอร์เข้าเบเกอรี
+          </button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Two-Column Workspace -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+      <!-- Left 2 Cols: Order Queue -->
+      <section class="lg:col-span-2 space-y-4">
+        <div class="flex items-center justify-between flex-wrap gap-2">
+          <h2 class="text-lg font-bold text-slate-900">
+            คิวออเดอร์เบเกอรี (<span id="order-count">0</span> รายการ)
+          </h2>
+          <div class="flex gap-1.5 text-xs">
+            <button onclick="setFilter('all')" id="flt-all" class="flt-btn px-3 py-1 rounded-full bg-slate-900 text-white font-semibold">ทั้งหมด</button>
+            <button onclick="setFilter('tray')" id="flt-tray" class="flt-btn px-3 py-1 rounded-full bg-white border border-slate-300 text-slate-700 font-semibold">เฉพาะแบบถาด</button>
+            <button onclick="setFilter('new_alert')" id="flt-new_alert" class="flt-btn px-3 py-1 rounded-full bg-white border border-slate-300 text-slate-700 font-semibold">รอรับ</button>
+          </div>
+        </div>
+
+        <div id="orders-list" class="space-y-3"></div>
+      </section>
+
+      <!-- Right Col: Production Readiness & Logs -->
+      <aside class="space-y-4">
+        <div class="bg-white rounded-2xl border border-amber-200 p-4 shadow-sm">
+          <h2 class="text-base font-bold text-slate-900 mb-1">
+            สรุปยอดเตรียมล่วงหน้า & สต็อกจำลอง
+          </h2>
+          <p class="text-xs text-slate-500 mb-3">
+            เทียบยอดสั่งจองแบบถาด/ชิ้น กับสต็อกพร้อมส่งและรอบการผลิต
+          </p>
+          <div id="production-summary" class="space-y-2.5"></div>
+        </div>
+
+        <div class="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+          <h3 class="text-sm font-bold text-slate-900 mb-2">
+            ประวัติการตอบรับ & เหตุผลก่อน CN
+          </h3>
+          <div id="activity-logs" class="space-y-2 max-h-64 overflow-y-auto text-xs"></div>
+        </div>
+      </aside>
+
+    </div>
+  </main>
+
+  <!-- Printable / PDF Document View -->
+  <div id="print-document"></div>
+
+  <!-- Shortage / Pre-CN Reason Modal -->
+  <div id="shortage-modal" class="no-print hidden fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-md w-full p-5 shadow-2xl space-y-4">
+      <div>
+        <span class="text-xs font-bold text-rose-600 uppercase">ตรวจสอบก่อนแจ้ง CN</span>
+        <h3 class="text-lg font-bold text-slate-900">แจ้งของไม่พอ / ระบุเหตุผลรองรับ</h3>
+        <p id="shortage-order-label" class="text-xs text-slate-500 mt-0.5"></p>
+      </div>
+
+      <div>
+        <label class="block text-xs font-semibold text-slate-700 mb-1">เลือกเหตุผลตามเกณฑ์หน้างาน</label>
+        <select id="shortage-reason-select" class="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm">
+          <option value="ของไม่พอสำหรับรอบส่งนี้ รอตรวจสอบรอบเตาถัดไป">ของไม่พอสำหรับรอบส่งนี้ รอตรวจสอบรอบเตาถัดไป</option>
+          <option value="ออเดอร์ถาดเข้ากระชั้นชิด เวลาพักโด/อบไม่ทันกำหนดส่ง">ออเดอร์ถาดเข้ากระชั้นชิด เวลาพักโด/อบไม่ทันกำหนดส่ง</option>
+          <option value="สต็อกวัตถุดิบ/สินค้าตัวหลักไม่พอ รอหัวหน้างานประเมิน">สต็อกวัตถุดิบ/สินค้าตัวหลักไม่พอ รอหัวหน้างานประเมิน</option>
+          <option value="สินค้าไม่ผ่านเกณฑ์คุณภาพ/ตัดทิ้งตามมาตรฐาน">สินค้าไม่ผ่านเกณฑ์คุณภาพ/ตัดทิ้งตามมาตรฐาน</option>
+        </select>
+      </div>
+
+      <div class="flex items-center gap-2 pt-2">
+        <button onclick="closeShortageModal()" class="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-sm">
+          ยกเลิก
+        </button>
+        <button onclick="confirmShortageAction('shortage_alert')" class="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-sm">
+          แจ้งของไม่พอ
+        </button>
+        <button id="btn-confirm-cn" onclick="confirmShortageAction('cn_flagged')" class="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-sm">
+          ยืนยันทำ CN
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Supabase Config Modal -->
+  <div id="supabase-modal" class="no-print hidden fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-md w-full p-5 shadow-2xl space-y-4">
+      <div>
+        <h3 class="text-lg font-bold text-slate-900">เชื่อมต่อ Supabase จริง</h3>
+        <p class="text-xs text-slate-500 mt-1">
+          ใส่ Project URL และ Publishable Key เพื่ออ่านและบันทึกออเดอร์ลงตาราง Supabase จริงแบบเรียลไทม์
+        </p>
+      </div>
+      <div class="space-y-3">
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Supabase Project URL</label>
+          <input id="sb-url" type="text" placeholder="https://xxxx.supabase.co" class="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Supabase Publishable / Anon Key</label>
+          <input id="sb-key" type="text" placeholder="sb_publishable_... หรือ eyJ..." class="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+        </div>
+      </div>
+      <div class="flex justify-end gap-2 pt-2">
+        <button onclick="useLocalDemoMode()" class="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs">
+          ใช้โหมดเดโมในเครื่อง
+        </button>
+        <button onclick="closeSupabaseModal()" class="px-3.5 py-2 rounded-xl border border-slate-300 text-slate-600 font-semibold text-xs">
+          ปิด
+        </button>
+        <button onclick="connectSupabase()" class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs">
+          บันทึก & เชื่อมต่อ
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const PRODUCTS = {
+      'BK-001': { sku: 'BK-001', name: 'แซนด์วิชแฮมชีส', piecesPerTray: 12, prepMin: 45, round: 'กะกลางคืน (ทับ 1)', stockPieces: 24 },
+      'BK-002': { sku: 'BK-002', name: 'ขนมปังกะโหลก (แถว)', piecesPerTray: 6, prepMin: 120, round: 'รอบเช้า (ทับ 1)', stockPieces: 18 },
+      'BK-003': { sku: 'BK-003', name: 'ครัวซองต์เนยสด', piecesPerTray: 15, prepMin: 90, round: 'รอบเช้า (ทับ 1)', stockPieces: 15 },
+      'BK-004': { sku: 'BK-004', name: 'เดนิชลูกเกด', piecesPerTray: 12, prepMin: 90, round: 'รอบบ่าย (ทับ 1)', stockPieces: 24 }
+    };
+
+    const STATUS_LABELS = {
+      new_alert: 'ออเดอร์ใหม่ (รอรับ)',
+      accepted: 'รับออเดอร์แล้ว',
+      preparing: 'กำลังเตรียม/อบ',
+      ready: 'พร้อมส่ง',
+      shortage_alert: 'ของไม่พอ / รอหัวหน้า',
+      cn_flagged: 'ทำ CN แล้ว'
+    };
+
+    let currentRole = 'staff';
+    let currentFilter = 'all';
+    let activeShortageOrderId = null;
+    let latestToastOrderId = null;
+    let supabaseClient = null;
+    let isUsingSupabase = false;
+    let realtimeChannel = null;
+
+    let orders = [
+      {
+        id: 'ord-101',
+        order_no: 'MKP-O2O-001',
+        channel: 'Makro Pro - O2O',
+        product_code: 'BK-003',
+        product_name: 'ครัวซองต์เนยสด',
+        unit_type: 'tray',
+        quantity: 3,
+        total_pieces: 45,
+        batch_round: 'รอบเช้า (ทับ 1)',
+        customer_note: 'ลูกค้าสั่งจัดเบรกช่วงเช้า',
+        latest_note: '',
+        has_tray_item: true,
+        delivery_in_mins: 110,
+        status: 'new_alert',
+        created_at: new Date().toISOString()
+      },
+      {
+        id: 'ord-102',
+        order_no: 'MKP-O2O-002',
+        channel: 'Makro Pro - O2O',
+        product_code: 'BK-001',
+        product_name: 'แซนด์วิชแฮมชีส',
+        unit_type: 'piece',
+        quantity: 12,
+        total_pieces: 12,
+        batch_round: 'กะกลางคืน (ทับ 1)',
+        customer_note: 'รับหน้าร้าน',
+        latest_note: '',
+        has_tray_item: false,
+        delivery_in_mins: 65,
+        status: 'preparing',
+        created_at: new Date(Date.now() - 12 * 60000).toISOString()
+      }
+    ];
+
+    let logs = [
+      { time: 'เริ่มต้น', role: 'ระบบ', text: 'พร้อมใช้งานโหมดเดโมและเชื่อมต่อ Supabase จริง' }
+    ];
+
+    function playAlertSound() {
+      if (!document.getElementById('sound-toggle').checked) return;
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(880, ctx.currentTime);
+        osc.frequency.setValueAtTime(1174.66, ctx.currentTime + 0.12);
+        gain.gain.setValueAtTime(0.15, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.35);
+      } catch (e) {}
+    }
+
+    function setRole(role) {
+      currentRole = role;
+      document.querySelectorAll('.role-btn').forEach(btn => {
+        btn.className = 'role-btn px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition text-slate-600 hover:bg-white';
+      });
+      document.getElementById(`role-${role}`).className =
+        'role-btn px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition bg-amber-500 text-white shadow-sm';
+      renderAll();
+    }
+
+    function setFilter(flt) {
+      currentFilter = flt;
+      document.querySelectorAll('.flt-btn').forEach(btn => {
+        btn.className = 'flt-btn px-3 py-1 rounded-full bg-white border border-slate-300 text-slate-700 font-semibold';
+      });
+      document.getElementById(`flt-${flt}`).className = 'flt-btn px-3 py-1 rounded-full bg-slate-900 text-white font-semibold';
+      renderOrders();
+    }
+
+    // --- Supabase Integration ---
+    function openSupabaseModal() {
+      document.getElementById('supabase-modal').classList.remove('hidden');
+    }
+    function closeSupabaseModal() {
+      document.getElementById('supabase-modal').classList.add('hidden');
+    }
+    function useLocalDemoMode() {
+      isUsingSupabase = false;
+      if (realtimeChannel && supabaseClient) {
+        supabaseClient.removeChannel(realtimeChannel);
+      }
+      document.getElementById('btn-refresh-sb').classList.add('hidden');
+      document.getElementById('mode-badge').textContent = 'โหมดเดโมในเครื่อง (พร้อมเล่นทันที)';
+      document.getElementById('mode-badge').className = 'px-2.5 py-0.5 rounded-full font-semibold bg-emerald-600 text-white';
+      closeSupabaseModal();
+    }
+
+    async function connectSupabase() {
+      let url = document.getElementById('sb-url').value.trim().replace(/\/+$/, '').replace(/\/rest\/v1$/, '');
+      const key = document.getElementById('sb-key').value.trim();
+      if (!url || !key || !window.supabase) return;
+
+      supabaseClient = window.supabase.createClient(url, key);
+      isUsingSupabase = true;
+      document.getElementById('btn-refresh-sb').classList.remove('hidden');
+      document.getElementById('mode-badge').textContent = 'เชื่อมต่อ Supabase แล้ว (ซิงก์จริง)';
+      document.getElementById('mode-badge').className = 'px-2.5 py-0.5 rounded-full font-semibold bg-sky-600 text-white';
+      closeSupabaseModal();
+
+      await syncFromSupabase(false);
+      subscribeRealtimeOrders();
+    }
+
+    async function syncFromSupabase(notifyNew = false) {
+      if (!isUsingSupabase || !supabaseClient) return;
+      try {
+        const { data: sbOrders, error: ordErr } = await supabaseClient
+          .from('orders')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (ordErr) throw ordErr;
+
+        const { data: sbItems } = await supabaseClient
+          .from('order_items')
+          .select('*');
+
+        const { data: sbProducts } = await supabaseClient
+          .from('products')
+          .select('*');
+
+        const prodById = {};
+        (sbProducts || []).forEach(p => { prodById[p.id] = p; });
+
+        const itemByOrder = {};
+        (sbItems || []).forEach(it => {
+          if (!itemByOrder[it.order_id]) itemByOrder[it.order_id] = it;
+        });
+
+        const prevIds = new Set(orders.map(o => o.id));
+
+        orders = (sbOrders || []).map(o => {
+          const it = itemByOrder[o.id];
+          const p = it ? prodById[it.product_id] : null;
+          const sku = p?.sku_code || 'BK-003';
+          const fallbackProd = PRODUCTS[sku] || PRODUCTS['BK-003'];
+          const unitType = it?.unit_type || (o.has_tray_item ? 'tray' : 'piece');
+          const qty = it?.quantity || 1;
+          const totalPieces = it?.total_pieces || (unitType === 'tray' ? qty * fallbackProd.piecesPerTray : qty);
+          const deliveryMins = Math.max(15, Math.round((new Date(o.delivery_time) - new Date()) / 60000));
+
+          return {
+            id: o.id,
+            order_no: o.order_no,
+            channel: o.channel || 'Makro Pro - O2O',
+            product_code: sku,
+            product_name: p?.name || fallbackProd.name,
+            unit_type: unitType,
+            quantity: qty,
+            total_pieces: totalPieces,
+            batch_round: it?.batch_round || fallbackProd.round,
+            customer_note: o.customer_note || '',
+            latest_note: o.latest_note || '',
+            has_tray_item: Boolean(o.has_tray_item),
+            delivery_in_mins: Number.isFinite(deliveryMins) ? deliveryMins : 90,
+            status: o.status || 'new_alert',
+            created_at: o.created_at
+          };
+        });
+
+        if (notifyNew && orders.length > 0 && !prevIds.has(orders[0].id)) {
+          const newest = orders[0];
+          showToast(newest, PRODUCTS[newest.product_code] || PRODUCTS['BK-003']);
+          playAlertSound();
+        }
+
+        const { data: sbLogs } = await supabaseClient
+          .from('order_status_logs')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(25);
+
+        if (sbLogs && sbLogs.length > 0) {
+          logs = sbLogs.map(l => ({
+            time: new Date(l.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }),
+            role: l.action_by_role,
+            text: `${l.action_type}${l.reason_note ? ' — ' + l.reason_note : ''}`
+          }));
+        }
+
+        addLog('Supabase', `ซิงก์ข้อมูลออเดอร์สำเร็จ (${orders.length} รายการ)`);
+        renderAll();
+      } catch (err) {
+        addLog('Supabase Error', err.message || 'ไม่สามารถอ่านข้อมูลจาก Supabase ได้');
+        renderLogs();
+      }
+    }
+
+    function subscribeRealtimeOrders() {
+      if (!isUsingSupabase || !supabaseClient) return;
+      if (realtimeChannel) supabaseClient.removeChannel(realtimeChannel);
+      realtimeChannel = supabaseClient
+        .channel('bakery-orders-realtime')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+          syncFromSupabase(true);
+        })
+        .subscribe();
+    }
+
+    // --- Create Order (Local + Supabase) ---
+    function handleCreateOrder(e) {
+      e.preventDefault();
+      const code = document.getElementById('sim-product').value;
+      const unit = document.getElementById('sim-unit').value;
+      const qty = Math.max(1, parseInt(document.getElementById('sim-qty').value || '1', 10));
+      const note = document.getElementById('sim-note').value.trim();
+      addNewOrder(code, unit, qty, note);
+      document.getElementById('sim-note').value = '';
+    }
+
+    function triggerDemoOrder(forceTray) {
+      const codes = Object.keys(PRODUCTS);
+      const code = forceTray ? 'BK-003' : codes[Math.floor(Math.random() * codes.length)];
+      const unit = forceTray ? 'tray' : (Math.random() > 0.4 ? 'tray' : 'piece');
+      const qty = unit === 'tray' ? (Math.floor(Math.random() * 3) + 2) : (Math.floor(Math.random() * 12) + 6);
+      addNewOrder(code, unit, qty, forceTray ? 'ออเดอร์ถาดด่วนจาก Makro Pro' : 'ออเดอร์จำลอง O2O');
+    }
+
+    async function addNewOrder(productCode, unitType, quantity, note = '') {
+      const prod = PRODUCTS[productCode];
+      const totalPieces = unitType === 'tray' ? quantity * prod.piecesPerTray : quantity;
+      const orderNo = `MKP-O2O-${String(Math.floor(100 + Math.random() * 899))}`;
+      const deliveryMins = unitType === 'tray' ? 120 : 60;
+      const deliveryIso = new Date(Date.now() + deliveryMins * 60000).toISOString();
+
+      const localOrder = {
+        id: 'ord-' + Date.now(),
+        order_no: orderNo,
+        channel: 'Makro Pro - O2O',
+        product_code: productCode,
+        product_name: prod.name,
+        unit_type: unitType,
+        quantity,
+        total_pieces: totalPieces,
+        batch_round: prod.round,
+        customer_note: note,
+        latest_note: '',
+        has_tray_item: unitType === 'tray',
+        delivery_in_mins: deliveryMins,
+        status: 'new_alert',
+        created_at: new Date().toISOString()
+      };
+
+      if (isUsingSupabase && supabaseClient) {
+        try {
+          const { data: insertedOrder, error: ordErr } = await supabaseClient
+            .from('orders')
+            .insert([{
+              order_no: orderNo,
+              channel: 'Makro Pro - O2O',
+              customer_note: note || 'ออเดอร์จาก Makro Pro / O2O',
+              delivery_time: deliveryIso,
+              has_tray_item: unitType === 'tray',
+              status: 'new_alert'
+            }])
+            .select()
+            .single();
+
+          if (ordErr) throw ordErr;
+
+          const { data: dbProd } = await supabaseClient
+            .from('products')
+            .select('id')
+            .eq('sku_code', productCode)
+            .maybeSingle();
+
+          await supabaseClient.from('order_items').insert([{
+            order_id: insertedOrder.id,
+            product_id: dbProd?.id || null,
+            unit_type: unitType,
+            quantity,
+            total_pieces: totalPieces,
+            batch_round: prod.round,
+            item_status: 'pending'
+          }]);
+
+          await supabaseClient.from('order_status_logs').insert([{
+            order_id: insertedOrder.id,
+            action_by_role: 'o2o_sim',
+            action_type: 'create_demo',
+            reason_note: `${orderNo}: ${prod.name} (${quantity} ${unitType === 'tray' ? 'ถาด' : 'ชิ้น'} / ${totalPieces} ชิ้น)`
+          }]);
+
+          await syncFromSupabase(false);
+          showToast({ ...localOrder, id: insertedOrder.id }, prod);
+          playAlertSound();
+          return;
+        } catch (err) {
+          addLog('Supabase Error', `บันทึกออเดอร์ไม่สำเร็จ: ${err.message}`);
+        }
+      }
+
+      orders.unshift(localOrder);
+      addLog('O2O จำลอง', `ออเดอร์ใหม่ ${orderNo}: ${prod.name} (${quantity} ${unitType === 'tray' ? 'ถาด' : 'ชิ้น'} / รวม ${totalPieces} ชิ้น)`);
+      showToast(localOrder, prod);
+      playAlertSound();
+      renderAll();
+    }
+
+    async function updateOrderStatus(orderId, newStatus, note = '') {
+      const ord = orders.find(o => o.id === orderId);
+      if (!ord) return;
+      ord.status = newStatus;
+      if (note) ord.latest_note = note;
+
+      const roleLabel = currentRole === 'supervisor' ? 'หัวหน้างาน' : (currentRole === 'staff' ? 'พนักงานเบเกอรี' : 'O2O จำลอง');
+
+      if (isUsingSupabase && supabaseClient && !String(orderId).startsWith('ord-')) {
+        try {
+          await supabaseClient
+            .from('orders')
+            .update({ status: newStatus, latest_note: note || ord.latest_note })
+            .eq('id', orderId);
+
+          await supabaseClient.from('order_status_logs').insert([{
+            order_id: orderId,
+            action_by_role: currentRole,
+            action_type: newStatus,
+            reason_note: note || `${ord.order_no} -> ${STATUS_LABELS[newStatus] || newStatus}`
+          }]);
+        } catch (err) {
+          addLog('Supabase Error', err.message);
+        }
+      }
+
+      addLog(roleLabel, `${ord.order_no}: ${STATUS_LABELS[newStatus] || newStatus}${note ? ' — ' + note : ''}`);
+      renderAll();
+    }
+
+    // --- Toast & Shortage Modal ---
+    function showToast(order, prod) {
+      latestToastOrderId = order.id;
+      document.getElementById('toast-tray-tag').classList.toggle('hidden', !order.has_tray_item);
+      document.getElementById('toast-title').textContent =
+        `${order.order_no} • ${prod.name} (${order.quantity} ${order.unit_type === 'tray' ? 'ถาด' : 'ชิ้น'})`;
+      document.getElementById('toast-desc').textContent =
+        `รอบแนะนำ: ${prod.round} • เวลาเตรียม ~${prod.prepMin} นาที • ส่งมอบใน ~${order.delivery_in_mins} นาที`;
+      document.getElementById('live-toast').classList.remove('hidden');
+    }
+
+    function hideToast() {
+      document.getElementById('live-toast').classList.add('hidden');
+    }
+
+    function acceptLatestToastOrder() {
+      if (latestToastOrderId) {
+        updateOrderStatus(latestToastOrderId, 'accepted', 'รับออเดอร์จากหน้าต่างแจ้งเตือน');
+        hideToast();
+      }
+    }
+
+    function openShortageModal(orderId) {
+      activeShortageOrderId = orderId;
+      const ord = orders.find(o => o.id === orderId);
+      const prod = PRODUCTS[ord.product_code] || PRODUCTS['BK-003'];
+      document.getElementById('shortage-order-label').textContent =
+        `บิล ${ord.order_no} (${prod.name} • ${ord.quantity} ${ord.unit_type === 'tray' ? 'ถาด' : 'ชิ้น'})`;
+      const cnBtn = document.getElementById('btn-confirm-cn');
+      cnBtn.disabled = currentRole !== 'supervisor';
+      cnBtn.classList.toggle('opacity-40', currentRole !== 'supervisor');
+      document.getElementById('shortage-modal').classList.remove('hidden');
+    }
+
+    function closeShortageModal() {
+      activeShortageOrderId = null;
+      document.getElementById('shortage-modal').classList.add('hidden');
+    }
+
+    function confirmShortageAction(statusType) {
+      if (!activeShortageOrderId) return;
+      const reason = document.getElementById('shortage-reason-select').value;
+      updateOrderStatus(activeShortageOrderId, statusType, reason);
+      closeShortageModal();
+    }
+
+    function addLog(role, text) {
+      const timeStr = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+      logs.unshift({ time: timeStr, role, text });
+      if (logs.length > 30) logs.pop();
+    }
+
+    // --- Export Excel (.xls) ---
+    function exportToExcel() {
+      const rows = orders.map((o, idx) => {
+        const prod = PRODUCTS[o.product_code] || PRODUCTS['BK-003'];
+        return `
+          <tr>
+            <td>${idx + 1}</td>
+            <td>${o.order_no}</td>
+            <td>${o.channel}</td>
+            <td>${o.product_code}</td>
+            <td>${o.product_name || prod.name}</td>
+            <td>${o.unit_type === 'tray' ? 'ถาด' : 'ชิ้น'}</td>
+            <td>${o.quantity}</td>
+            <td>${o.total_pieces}</td>
+            <td>${o.batch_round || prod.round}</td>
+            <td>${STATUS_LABELS[o.status] || o.status}</td>
+            <td>${o.customer_note || '-'}</td>
+            <td>${o.latest_note || '-'}</td>
+          </tr>
+        `;
+      }).join('');
+
+      const excelHtml = `
+        <html xmlns:o="urn:schemas-microsoft-com:office:office"
+              xmlns:x="urn:schemas-microsoft-com:office:excel"
+              xmlns="http://www.w3.org/TR/REC-html40">
+        <head><meta charset="UTF-8" /></head>
+        <body>
+          <table border="1">
+            <thead>
+              <tr>
+                <th>ลำดับ</th>
+                <th>เลขออเดอร์</th>
+                <th>ช่องทาง</th>
+                <th>รหัสสินค้า</th>
+                <th>รายการสินค้า</th>
+                <th>รูปแบบการสั่ง</th>
+                <th>จำนวนสั่ง</th>
+                <th>จำนวนชิ้นรวม</th>
+                <th>รอบการผลิต</th>
+                <th>สถานะ</th>
+                <th>หมายเหตุลูกค้า</th>
+                <th>เหตุผลของไม่พอ / CN</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </body>
+        </html>
+      `;
+
+      const blob = new Blob(['\ufeff' + excelHtml], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `bakery-o2o-orders-${new Date().toISOString().slice(0, 10)}.xls`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      addLog('Export', 'ส่งออกไฟล์ Excel รายละเอียดออเดอร์เบเกอรีแล้ว');
+      renderLogs();
+    }
+
+    // --- Export Document (Printable / Save as PDF) ---
+    function exportOrderDocument() {
+      const totalPiecesAll = orders
+        .filter(o => o.status !== 'cn_flagged')
+        .reduce((sum, o) => sum + Number(o.total_pieces || 0), 0);
+
+      const docRows = orders.map((o, idx) => {
+        const prod = PRODUCTS[o.product_code] || PRODUCTS['BK-003'];
+        return `
+          <tr>
+            <td style="padding:8px;border:1px solid #cbd5e1;text-align:center;">${idx + 1}</td>
+            <td style="padding:8px;border:1px solid #cbd5e1;"><strong>${o.order_no}</strong><br/><small>${o.channel}</small></td>
+            <td style="padding:8px;border:1px solid #cbd5e1;">${o.product_name || prod.name} <span style="font-size:11px;color:#475569;">(${o.product_code})</span></td>
+            <td style="padding:8px;border:1px solid #cbd5e1;text-align:center;">${o.unit_type === 'tray' ? '<strong>ถาด</strong>' : 'ชิ้น'}</td>
+            <td style="padding:8px;border:1px solid #cbd5e1;text-align:right;">${o.quantity}</td>
+            <td style="padding:8px;border:1px solid #cbd5e1;text-align:right;"><strong>${o.total_pieces}</strong></td>
+            <td style="padding:8px;border:1px solid #cbd5e1;">${o.batch_round || prod.round}</td>
+            <td style="padding:8px;border:1px solid #cbd5e1;">${STATUS_LABELS[o.status] || o.status}${o.latest_note ? '<br/><small style="color:#b91c1c;">เหตุผล: ' + o.latest_note + '</small>' : ''}</td>
+          </tr>
+        `;
+      }).join('');
+
+      document.getElementById('print-document').innerHTML = `
+        <div style="max-width:900px;margin:0 auto;font-family:sans-serif;">
+          <div style="border-bottom:2px solid #0f172a;padding-bottom:10px;margin-bottom:14px;">
+            <h1 style="font-size:20px;margin:0;">ใบสรุปออเดอร์และรายละเอียดใบสั่งสินค้าเบเกอรี (Makro Pro / O2O)</h1>
+            <p style="font-size:12px;color:#475569;margin:4px 0 0;">
+              วันที่พิมพ์: ${new Date().toLocaleString('th-TH')} • จำนวนบิลทั้งหมด: ${orders.length} บิล • ยอดรวมเตรียม (ไม่รวม CN): ${totalPiecesAll} ชิ้น
+            </p>
+          </div>
+          <table style="width:100%;border-collapse:collapse;font-size:12px;">
+            <thead>
+              <tr style="background:#f1f5f9;">
+                <th style="padding:8px;border:1px solid #cbd5e1;">#</th>
+                <th style="padding:8px;border:1px solid #cbd5e1;">เลขออเดอร์</th>
+                <th style="padding:8px;border:1px solid #cbd5e1;">รายการสินค้า</th>
+                <th style="padding:8px;border:1px solid #cbd5e1;">หน่วย</th>
+                <th style="padding:8px;border:1px solid #cbd5e1;">จำนวน</th>
+                <th style="padding:8px;border:1px solid #cbd5e1;">ชิ้นรวม</th>
+                <th style="padding:8px;border:1px solid #cbd5e1;">รอบผลิต</th>
+                <th style="padding:8px;border:1px solid #cbd5e1;">สถานะ / หมายเหตุ</th>
+              </tr>
+            </thead>
+            <tbody>${docRows}</tbody>
+          </table>
+        </div>
+      `;
+
+      addLog('Export', 'เปิดหน้าเอกสารใบสรุปออเดอร์ (พร้อมพิมพ์ / บันทึกเป็น PDF)');
+      renderLogs();
+      window.print();
+    }
+
+    // --- Renderers ---
+    function renderAll() {
+      renderKPIs();
+      renderOrders();
+      renderProductionSummary();
+      renderLogs();
+    }
+
+    function renderKPIs() {
+      document.getElementById('kpi-new').textContent = orders.filter(o => o.status === 'new_alert').length;
+      document.getElementById('kpi-tray').textContent = orders.filter(o => o.has_tray_item && !['ready', 'cn_flagged'].includes(o.status)).length;
+      document.getElementById('kpi-prep').textContent = orders.filter(o => ['accepted', 'preparing'].includes(o.status)).length;
+      document.getElementById('kpi-cn').textContent = orders.filter(o => ['shortage_alert', 'cn_flagged'].includes(o.status)).length;
+    }
+
+    function renderOrders() {
+      const container = document.getElementById('orders-list');
+      const filtered = orders.filter(o => {
+        if (currentFilter === 'tray') return o.has_tray_item;
+        if (currentFilter === 'new_alert') return o.status === 'new_alert';
+        return true;
+      });
+
+      document.getElementById('order-count').textContent = filtered.length;
+
+      if (filtered.length === 0) {
+        container.innerHTML = `<div class="bg-white rounded-2xl p-8 text-center text-slate-400 border border-dashed border-slate-300">ไม่มีออเดอร์ในหมวดนี้</div>`;
+        return;
+      }
+
+      const badgeStyle = {
+        new_alert: 'bg-orange-100 text-orange-700',
+        accepted: 'bg-sky-100 text-sky-700',
+        preparing: 'bg-amber-100 text-amber-800',
+        ready: 'bg-emerald-100 text-emerald-700',
+        shortage_alert: 'bg-rose-100 text-rose-700',
+        cn_flagged: 'bg-slate-800 text-white'
+      };
+
+      container.innerHTML = filtered.map(ord => {
+        const prod = PRODUCTS[ord.product_code] || PRODUCTS['BK-003'];
+        const isTray = ord.has_tray_item;
+        const timeWarning = ord.delivery_in_mins <= prod.prepMin + 20;
+
+        return `
+          <div class="bg-white rounded-2xl p-4 shadow-sm border-2 transition ${
+            isTray ? 'border-rose-400 bg-rose-50/20' : 'border-amber-200/70'
+          }">
+            <div class="flex flex-wrap items-start justify-between gap-2">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="font-extrabold text-sm text-slate-900">${ord.order_no}</span>
+                <span class="text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-medium">${ord.channel}</span>
+                ${isTray
+                  ? '<span class="text-xs px-2.5 py-0.5 rounded-full bg-rose-600 text-white font-bold">ถาด! วางแผนล่วงหน้า</span>'
+                  : '<span class="text-xs px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 font-semibold">ชิ้น</span>'}
+              </div>
+              <span class="px-2.5 py-1 rounded-full text-xs font-bold ${badgeStyle[ord.status] || 'bg-slate-100 text-slate-700'}">
+                ${STATUS_LABELS[ord.status] || ord.status}
+              </span>
+            </div>
+
+            <div class="mt-3 flex flex-wrap items-baseline justify-between gap-2">
+              <div>
+                <h3 class="text-base font-bold text-slate-900">${ord.product_name || prod.name}</h3>
+                <p class="text-xs text-slate-600 mt-0.5">
+                  สั่ง: <strong class="text-slate-900">${ord.quantity} ${ord.unit_type === 'tray' ? 'ถาด' : 'ชิ้น'}</strong>
+                  (รวม <strong>${ord.total_pieces}</strong> ชิ้น) • รอบ: <span class="font-medium">${ord.batch_round || prod.round}</span>
+                </p>
+                ${ord.customer_note ? `<p class="text-[11px] text-slate-500 mt-0.5">หมายเหตุ: ${ord.customer_note}</p>` : ''}
+                ${ord.latest_note ? `<p class="text-[11px] text-rose-700 font-medium mt-0.5">เหตุผล/อัปเดต: ${ord.latest_note}</p>` : ''}
+              </div>
+              <div class="text-right">
+                <p class="text-xs font-semibold ${timeWarning ? 'text-rose-600' : 'text-slate-700'}">
+                  ส่งมอบใน ~${ord.delivery_in_mins} นาที
+                </p>
+                <p class="text-[11px] text-slate-500">เวลาเตรียม/อบ ~${prod.prepMin} นาที</p>
+              </div>
+            </div>
+
+            <div class="mt-4 pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+              <div class="flex flex-wrap gap-1.5">
+                ${ord.status === 'new_alert' ? `
+                  <button onclick="updateOrderStatus('${ord.id}', 'accepted')"
+                    class="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold shadow-sm">
+                    รับออเดอร์
+                  </button>
+                ` : ''}
+                ${['new_alert', 'accepted'].includes(ord.status) ? `
+                  <button onclick="updateOrderStatus('${ord.id}', 'preparing')"
+                    class="px-3.5 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold">
+                    เริ่มเตรียม/อบ
+                  </button>
+                ` : ''}
+                ${ord.status === 'preparing' ? `
+                  <button onclick="updateOrderStatus('${ord.id}', 'ready')"
+                    class="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold">
+                    แพ็กพร้อมส่ง
+                  </button>
+                ` : ''}
+              </div>
+
+              ${!['ready', 'cn_flagged'].includes(ord.status) ? `
+                <button onclick="openShortageModal('${ord.id}')"
+                  class="px-3 py-1.5 rounded-xl border border-rose-300 text-rose-700 hover:bg-rose-50 text-xs font-semibold">
+                  แจ้งของไม่พอ / ตรวจสอบ CN
+                </button>
+              ` : ''}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderProductionSummary() {
+      const container = document.getElementById('production-summary');
+      container.innerHTML = Object.values(PRODUCTS).map(prod => {
+        const activeOrders = orders.filter(o => o.product_code === prod.sku && !['cn_flagged', 'ready'].includes(o.status));
+        const neededPieces = activeOrders.reduce((sum, o) => sum + Number(o.total_pieces || 0), 0);
+        const shortagePieces = Math.max(0, neededPieces - prod.stockPieces);
+
+        return `
+          <div class="p-3 rounded-xl bg-amber-50/70 border border-amber-200/80">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs font-bold text-slate-900">${prod.name}</span>
+              <span class="text-[11px] font-semibold text-amber-800">${prod.round}</span>
+            </div>
+            <div class="mt-1.5 flex items-center justify-between text-xs">
+              <span class="text-slate-600">สต็อกพร้อมส่ง: <b>${prod.stockPieces}</b> ชิ้น</span>
+              <span class="text-slate-600">ยอดสั่งค้าง: <b>${neededPieces}</b> ชิ้น</span>
+            </div>
+            <div class="mt-1 text-xs font-semibold ${shortagePieces > 0 ? 'text-rose-600' : 'text-emerald-700'}">
+              ${shortagePieces > 0
+                ? `ต้องวางแผนผลิตเพิ่มอีก ${shortagePieces} ชิ้น (${Math.ceil(shortagePieces / prod.piecesPerTray)} ถาด)`
+                : 'สต็อกเพียงพอสำหรับออเดอร์ที่ค้างอยู่'}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderLogs() {
+      const container = document.getElementById('activity-logs');
+      container.innerHTML = logs.map(l => `
+        <div class="p-2 rounded-lg bg-slate-50 border border-slate-100">
+          <div class="flex items-center justify-between text-[11px] text-slate-400">
+            <span class="font-semibold text-slate-600">${l.role}</span>
+            <span>${l.time}</span>
+          </div>
+          <p class="text-slate-700 mt-0.5">${l.text}</p>
+        </div>
+      `).join('');
+    }
+
+    renderAll();
+  </script>
+</body>
+</html>
